@@ -1,302 +1,45 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Palm Reader · Pro Terminal</title>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-
-    <style>
-        :root {
-            --bg-main: #F4F7F9;
-            --sidebar-bg: #FFFFFF;
-            --accent-blue: #1A73E8;
-            --accent-soft: #E8F0FE;
-            --text-title: #202124;
-            --text-body: #3C4043;
-            --text-muted: #5F6368;
-            --border: #DADCE0;
-            --shadow: 0 4px 20px rgba(0,0,0,0.06);
-            --success: #22c55e;
-        }
-
-        * { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
-        body {
-            margin: 0;
-            height: 100vh;
-            display: flex;
-            background: var(--bg-main);
-            font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
-            color: var(--text-body);
-            overflow: hidden;
-        }
-
-        /* --- Sidebar --- */
-        .sidebar {
-            width: 300px;
-            background: var(--sidebar-bg);
-            border-right: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            padding: 24px;
-            z-index: 10;
-            flex-shrink: 0;
-        }
-
-        .brand { margin-bottom: 32px; }
-        .brand h1 { font-size: 20px; margin: 0; color: var(--text-title); font-weight: 700; display: flex; align-items: center; gap: 8px; }
-        .brand span { font-size: 10px; color: var(--accent-blue); background: var(--accent-soft); padding: 2px 6px; border-radius: 4px; }
-        .brand p { font-size: 12px; color: var(--text-muted); margin: 6px 0 0; }
-
-        .control-group { margin-bottom: 24px; }
-        .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px; display: block; letter-spacing: 0.05em; }
-
-        .btn-stack { display: grid; gap: 10px; }
-        button { 
-            all: unset; cursor: pointer; border-radius: 8px; font-size: 13px; font-weight: 600; 
-            display: flex; align-items: center; justify-content: center; gap: 8px; 
-            transition: all 0.2s; height: 42px; 
-        }
-        
-        .btn-source { background: #f8f9fa; border: 1px solid var(--border); color: var(--text-body); }
-        .btn-source:hover { background: var(--accent-soft); border-color: var(--accent-blue); }
-        
-        .btn-action { background: var(--accent-blue); color: white; box-shadow: 0 4px 12px rgba(26, 115, 232, 0.2); }
-        .btn-action:hover { transform: translateY(-1px); }
-        .btn-disabled { opacity: 0.5; cursor: not-allowed; filter: grayscale(1); }
-
-        .stats-panel { margin-top: auto; display: grid; gap: 10px; }
-        .stat-card { background: #F8F9FA; border: 1px solid var(--border); padding: 12px; border-radius: 10px; }
-        .stat-card label { font-size: 10px; color: var(--text-muted); display: block; margin-bottom: 2px; }
-        .stat-card .value { font-size: 14px; font-weight: 700; color: var(--text-title); }
-
-        /* --- Main View --- */
-        .main-view { flex: 1; display: flex; flex-direction: column; padding: 20px; gap: 20px; overflow: hidden; position: relative; }
-        
-        .canvas-container { 
-            flex: 1; background: #000; border-radius: 16px; position: relative; 
-            box-shadow: var(--shadow); border: 1px solid var(--border); 
-            display: flex; align-items: center; justify-content: center; overflow: hidden; 
-        }
-
-        #output-canvas { width: 100%; height: 100%; object-fit: contain; z-index: 2; transition: opacity 0.3s; }
-        #output-canvas.mirrored { transform: scaleX(-1); }
-
-        /* 引导提示图层 */
-        .overlay-guide {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            color: white; text-align: center; z-index: 1; pointer-events: none;
-            background: radial-gradient(circle, rgba(0,0,0,0) 0%, rgba(0,0,0,0.4) 100%);
-        }
-        .overlay-guide svg { width: 64px; height: 64px; margin-bottom: 16px; opacity: 0.6; }
-
-        /* --- Analysis Sidebar --- */
-        .analysis-sidebar {
-            width: 320px; background: var(--sidebar-bg); border-left: 1px solid var(--border);
-            display: flex; flex-direction: column; padding: 24px; overflow-y: auto; flex-shrink: 0;
-        }
-
-        .report-card {
-            background: white; border: 1px solid var(--border); border-radius: 12px; 
-            padding: 16px; margin-bottom: 16px;
-        }
-        .report-card h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--accent-blue); display: flex; align-items: center; gap: 6px; }
-        .report-card p { margin: 0; font-size: 12px; color: var(--text-muted); line-height: 1.6; }
-        
-        .tag { 
-            display: inline-block; padding: 3px 8px; border-radius: 4px; 
-            background: #F1F3F4; font-size: 10px; margin-top: 10px; font-weight: 700; 
-        }
-
-        #video, #file-input { display: none; }
-    </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>手掌与掌纹识别 Demo</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="module" src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/piexifjs@1.0.6/piexif.min.js"></script>
 </head>
-
 <body>
-    <aside class="sidebar">
-        <div class="brand">
-            <h1>Palm AI <span>Vision</span></h1>
-            <p>专业级掌纹几何特征提取系统</p>
+    <div class="container">
+        <h1>手掌与掌纹识别 Demo</h1>
+
+        <div class="controls">
+            <button id="startCameraButton">拍照</button>
+            <button id="captureButton" style="display: none;">截图</button>
+            <input type="file" id="uploadImageInput" accept="image/jpeg, image/png">
+            <label for="uploadImageInput" class="button">导入照片</label>
+            <button id="recognizeButton" disabled>识别</button>
+            <button id="resetButton">重置</button>
         </div>
 
-        <div class="control-group">
-            <span class="section-label">数据接入</span>
-            <div class="btn-stack">
-                <button class="btn-source" id="open-camera-btn">📷 开启高清镜头</button>
-                <button class="btn-source" id="upload-photo-btn">🖼️ 导入本地图像</button>
-                <button class="btn-action btn-disabled" id="recognize-btn">✨ 开始深度识别</button>
+        <div class="video-container">
+            <video id="webcamVideo" autoplay playsinline style="display: none;"></video>
+            <canvas id="outputCanvas"></canvas>
+        </div>
+
+        <div class="results-panel">
+            <h2>结果</h2>
+            <p><strong>识别耗时:</strong> <span id="processingTime">N/A</span></p>
+            <div id="lineConfidences">
+                <p><strong>感情线 (Heart Line) 置信度:</strong> <span id="heartLineConf">N/A</span></p>
+                <p><strong>智慧线 (Head Line) 置信度:</strong> <span id="headLineConf">N/A</span></p>
+                <p><strong>生命线 (Life Line) 置信度:</strong> <span id="lifeLineConf">N/A</span></p>
             </div>
-            <input type="file" id="file-input" accept="image/*" />
+            <p><strong>识别状态:</strong> <span id="recognitionStatus">等待输入...</span></p>
+            <p><strong>失败原因:</strong> <span id="failureReason" class="error-message">无</span></p>
+            <div id="suggestions" class="suggestion-message"></div>
         </div>
+    </div>
 
-        <div class="stats-panel">
-            <span class="section-label">实时流状态</span>
-            <div class="stat-card"><label>计算延迟</label><span class="value" id="latency-label">-- ms</span></div>
-            <div class="stat-card"><label>分辨率</label><span class="value" id="res-label">0 x 0</span></div>
-            <div class="stat-card"><label>引擎反馈</label><span class="value" id="status-text">待机状态</span></div>
-        </div>
-    </aside>
-
-    <main class="main-view">
-        <div class="canvas-container">
-            <div class="overlay-guide" id="guide-layer">
-                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm4.59-12.42L10 14.17l-2.59-2.58L6 13l4 4 8-8z"/></svg>
-                <h2 style="font-size: 18px; margin: 0;">准备就绪</h2>
-                <p style="font-size: 13px; opacity: 0.8; margin-top: 8px;">请授权摄像头或上传一张手掌正面清晰照片</p>
-            </div>
-            <video id="video" playsinline></video>
-            <canvas id="output-canvas"></canvas>
-        </div>
-    </main>
-
-    <aside class="analysis-sidebar">
-        <span class="section-label">生理特征报告</span>
-        <div class="report-card">
-            <h3>🧬 生命线提取</h3>
-            <p>等待模型定位掌内关键点。定位后将分析其几何曲率与主干长度。</p>
-            <div class="tag">PENDING</div>
-        </div>
-        <div class="report-card">
-            <h3>🧠 智慧线提取</h3>
-            <p>系统已预载边缘检测算法，识别到手掌骨架后自动启动纹理分割。</p>
-            <div class="tag">WAITING</div>
-        </div>
-        <div class="report-card">
-            <h3>❤️ 感情线提取</h3>
-            <p>正在监控输入源。请确保掌心平整，光线均匀以获得最佳识别效果。</p>
-            <div class="tag">READY</div>
-        </div>
-    </aside>
-
-    <script>
-        const videoEl = document.getElementById("video");
-        const canvasEl = document.getElementById("output-canvas");
-        const canvasCtx = canvasEl.getContext("2d");
-        const resLabel = document.getElementById("res-label");
-        const latencyLabel = document.getElementById("latency-label");
-        const statusText = document.getElementById("status-text");
-        const guideLayer = document.getElementById("guide-layer");
-        const recognizeBtn = document.getElementById("recognize-btn");
-
-        let hands = null;
-        let camera = null;
-        let lastResults = null;
-
-        function initMediaPipe() {
-            hands = new Hands({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-            });
-            hands.setOptions({
-                maxNumHands: 1,
-                modelComplexity: 1,
-                minDetectionConfidence: 0.6,
-                minTrackingConfidence: 0.6
-            });
-            hands.onResults(onResults);
-        }
-
-        function onResults(results) {
-            const tEnd = performance.now();
-            const tStart = results._startTs || tEnd;
-            if (!results.image) return;
-
-            // 隐藏引导层
-            guideLayer.style.display = 'none';
-
-            // 动态分辨率匹配
-            if (canvasEl.width !== results.image.width || canvasEl.height !== results.image.height) {
-                canvasEl.width = results.image.width;
-                canvasEl.height = results.image.height;
-                resLabel.textContent = `${canvasEl.width} x ${canvasEl.height}`;
-            }
-
-            canvasCtx.save();
-            canvasCtx.clearRect(0, 0, canvasEl.width, canvasEl.height);
-            canvasCtx.drawImage(results.image, 0, 0, canvasEl.width, canvasEl.height);
-
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmarks = results.multiHandLandmarks[0];
-                lastResults = landmarks;
-                statusText.textContent = "目标锁定";
-                statusText.style.color = "var(--success)";
-                recognizeBtn.classList.remove("btn-disabled");
-
-                // --- 修正后的动态缩放逻辑 ---
-                // 使用更温和的缩放系数：在 1080p 下 baseScale 约为 1.35
-                const baseScale = Math.sqrt(canvasEl.width * canvasEl.height) / 1200; 
-                const pointRadius = Math.max(4, 7 * baseScale); // 视频流下约 8-10，高清图下约 15-20
-                const lineThickness = Math.max(1.5, 3.5 * baseScale); // 线条变细
-
-                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {
-                    color: 'rgba(255, 255, 255, 0.6)', 
-                    lineWidth: lineThickness 
-                });
-                
-                drawLandmarks(canvasCtx, landmarks, {
-                    color: '#22c55e', 
-                    fillColor: '#FFFFFF',
-                    lineWidth: Math.max(1, 1.5 * baseScale), 
-                    radius: pointRadius 
-                });
-            } else {
-                statusText.textContent = "正在寻找...";
-                statusText.style.color = "var(--accent-blue)";
-                recognizeBtn.classList.add("btn-disabled");
-            }
-            canvasCtx.restore();
-            latencyLabel.textContent = `${Math.round(tEnd - tStart)} ms`;
-        }
-
-        async function startCamera() {
-            if (!hands) initMediaPipe();
-            canvasEl.classList.add("mirrored");
-            statusText.textContent = "启动镜头...";
-            
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { width: { ideal: 1920 }, height: { ideal: 1080 } }
-                });
-                videoEl.srcObject = stream;
-                await videoEl.play();
-
-                camera = new Camera(videoEl, {
-                    onFrame: async () => {
-                        await hands.send({image: videoEl, _startTs: performance.now()});
-                    },
-                    width: 1920, height: 1080
-                });
-                camera.start();
-            } catch (err) {
-                alert("摄像头启动失败，请检查授权。");
-            }
-        }
-
-        function handleFileUpload(e) {
-            const file = e.target.files[0];
-            if (!file) return;
-            if (!hands) initMediaPipe();
-            
-            canvasEl.classList.remove("mirrored");
-            if (camera) camera.stop();
-            statusText.textContent = "正在解析图片...";
-
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                const img = new Image();
-                img.onload = async () => {
-                    await hands.send({image: img, _startTs: performance.now()});
-                };
-                img.src = event.target.result;
-            };
-            reader.readAsDataURL(file);
-        }
-
-        document.getElementById("open-camera-btn").onclick = startCamera;
-        document.getElementById("upload-photo-btn").onclick = () => document.getElementById("file-input").click();
-        document.getElementById("file-input").onchange = handleFileUpload;
-    </script>
+    <script type="module" src="script.js"></script>
 </body>
 </html>
