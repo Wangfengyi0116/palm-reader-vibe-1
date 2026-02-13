@@ -1,0 +1,7 @@
+{
+    "description": "Chrome DevTools Protocol",
+    "devtoolsFrontendUrl": "",
+    "title": "Local Server",
+    "url": "http://localhost:8000/",
+    "webSocketDebuggerUrl": ""
+  }

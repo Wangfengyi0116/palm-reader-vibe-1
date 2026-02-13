@@ -3,43 +3,230 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>手掌与掌纹识别 Demo</title>
-    <link rel="stylesheet" href="style.css">
-    <script type="module" src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/piexifjs@1.0.6/piexif.min.js"></script>
+    <title>AI 掌纹特征深度分析系统</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose"></script>
+    <script src="https://cdn.jsdelivr.net/npm/fingerpose@0.1.0/dist/fingerpose.min.js"></script>
+    <script async src="https://docs.opencv.org/4.5.0/opencv.js"></script>
+    
+    <style>
+        :root {
+            --primary: #00d1b2;
+            --bg-dark: #1a1a1a;
+            --panel-bg: #2d2d2d;
+            --text: #e0e0e0;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            width: 95%;
+            max-width: 1000px;
+            padding: 20px;
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            gap: 20px;
+        }
+
+        header {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #444;
+        }
+
+        /* 核心显示区域 */
+        .display-area {
+            position: relative;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            aspect-ratio: 4 / 3;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #webcamVideo {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* 镜像显示符合直觉 */
+        }
+
+        #outputCanvas {
+            position: absolute;
+            z-index: 10;
+            max-width: 100%;
+            max-height: 100%;
+        }
+
+        /* 右侧控制面板 */
+        .side-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .card {
+            background: var(--panel-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #444;
+        }
+
+        .status-badge {
+            font-size: 0.85rem;
+            padding: 4px 8px;
+            border-radius: 4px;
+            background: #444;
+        }
+
+        button {
+            background: var(--primary);
+            color: #000;
+            border: none;
+            padding: 12px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+
+        button:hover:not(:disabled) {
+            filter: brightness(1.1);
+            transform: translateY(-2px);
+        }
+
+        .upload-btn {
+            background: transparent;
+            border: 1px dashed var(--primary);
+            color: var(--primary);
+            position: relative;
+        }
+
+        input[type="file"] {
+            position: absolute;
+            opacity: 0;
+            inset: 0;
+            cursor: pointer;
+        }
+
+        /* 结果数据显示 */
+        .line-item {
+            margin: 10px 0;
+        }
+        .line-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            font-size: 0.9rem;
+        }
+        .progress-bar {
+            height: 6px;
+            background: #444;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            width: 0%;
+            transition: width 0.5s ease;
+        }
+
+        @media (max-width: 768px) {
+            .container { grid-template-columns: 1fr; }
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <h1>手掌与掌纹识别 Demo</h1>
 
-        <div class="controls">
-            <button id="startCameraButton">拍照</button>
-            <button id="captureButton" style="display: none;">截图</button>
-            <input type="file" id="uploadImageInput" accept="image/jpeg, image/png">
-            <label for="uploadImageInput" class="button">导入照片</label>
-            <button id="recognizeButton" disabled>识别</button>
-            <button id="resetButton">重置</button>
-        </div>
+<header>
+    <h1>PalmSense <span style="color:var(--primary)">Pro</span></h1>
+    <div id="systemStatus">等待启动...</div>
+</header>
 
-        <div class="video-container">
-            <video id="webcamVideo" autoplay playsinline style="display: none;"></video>
-            <canvas id="outputCanvas"></canvas>
-        </div>
-
-        <div class="results-panel">
-            <h2>结果</h2>
-            <p><strong>识别耗时:</strong> <span id="processingTime">N/A</span></p>
-            <div id="lineConfidences">
-                <p><strong>感情线 (Heart Line) 置信度:</strong> <span id="heartLineConf">N/A</span></p>
-                <p><strong>智慧线 (Head Line) 置信度:</strong> <span id="headLineConf">N/A</span></p>
-                <p><strong>生命线 (Life Line) 置信度:</strong> <span id="lifeLineConf">N/A</span></p>
-            </div>
-            <p><strong>识别状态:</strong> <span id="recognitionStatus">等待输入...</span></p>
-            <p><strong>失败原因:</strong> <span id="failureReason" class="error-message">无</span></p>
-            <div id="suggestions" class="suggestion-message"></div>
-        </div>
+<div class="container">
+    <div class="display-area">
+        <video id="webcamVideo" autoplay playsinline muted></video>
+        <canvas id="outputCanvas"></canvas>
     </div>
 
-    <script type="module" src="script.js"></script>
+    <div class="side-panel">
+        <div class="card">
+            <h3>系统控制</h3>
+            <button id="startCameraButton" style="width: 100%; margin-bottom: 10px;">开启实时采集</button>
+            <div class="upload-btn" style="text-align: center; padding: 10px; border-radius: 6px;">
+                <span>导入本地图像</span>
+                <input type="file" id="imageUpload" accept="image/*">
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>识别操作</h3>
+            <button id="recognizeButton" disabled style="width: 100%;">执行深度分析</button>
+            <p id="recognitionStatus" style="font-size: 0.8rem; margin-top: 10px; color: #aaa;">
+                请确保手掌平放且张开
+            </p>
+        </div>
+
+        <div class="card">
+            <h3>分析数据</h3>
+            <p style="font-size: 0.8rem;">耗时: <span id="processingTime">0</span></p>
+            
+            <div class="line-item">
+                <div class="line-label"><span>感情线 (Heart)</span><span id="heartLineConf">0%</span></div>
+                <div class="progress-bar"><div id="bar-heart" class="progress-fill" style="background: #FF3B30"></div></div>
+            </div>
+            
+            <div class="line-item">
+                <div class="line-label"><span>智慧线 (Head)</span><span id="headLineConf">0%</span></div>
+                <div class="progress-bar"><div id="bar-head" class="progress-fill" style="background: #4CD964"></div></div>
+            </div>
+
+            <div class="line-item">
+                <div class="line-label"><span>生命线 (Life)</span><span id="lifeLineConf">0%</span></div>
+                <div class="progress-bar"><div id="bar-life" class="progress-fill" style="background: #007AFF"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="script.js"></script>
+
+<script>
+    // 简单的 UI 联动脚本，配合 script.js 使用
+    function updateProgressUI(id, val) {
+        document.getElementById('bar-' + id).style.width = val + '%';
+    }
+    
+    // 监听识别状态，同步更新进度条动画
+    const observer = new MutationObserver(() => {
+        updateProgressUI('heart', parseInt(document.getElementById('heartLineConf').textContent));
+        updateProgressUI('head', parseInt(document.getElementById('headLineConf').textContent));
+        updateProgressUI('life', parseInt(document.getElementById('lifeLineConf').textContent));
+    });
+    
+    ['heartLineConf', 'headLineConf', 'lifeLineConf'].forEach(id => {
+        observer.observe(document.getElementById(id), { characterData: true, childList: true });
+    });
+</script>
+
 </body>
 </html>

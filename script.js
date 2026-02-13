@@ -1,241 +1,305 @@
-import { HandLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js';
+/**
+ * script.js - 全状态感知 & 精准解剖定位版
+ * 功能：TF.js Handpose + Fingerpose + OpenCV Worker
+ * 核心逻辑：以食指掌骨(p5-p0)中点定位合谷，并追踪三条主线
+ */
 
-// --- 1. DOM 元素获取 ---
-const startCameraButton = document.getElementById('startCameraButton');
-const captureButton = document.getElementById('captureButton');
-const uploadImageInput = document.getElementById('uploadImageInput');
-const recognizeButton = document.getElementById('recognizeButton');
-const resetButton = document.getElementById('resetButton');
-const webcamVideo = document.getElementById('webcamVideo');
-const outputCanvas = document.getElementById('outputCanvas');
-const ctx = outputCanvas.getContext('2d');
-const processingTimeSpan = document.getElementById('processingTime');
-const heartLineConfSpan = document.getElementById('heartLineConf');
-const headLineConfSpan = document.getElementById('headLineConf');
-const lifeLineConfSpan = document.getElementById('lifeLineConf');
-const recognitionStatusSpan = document.getElementById('recognitionStatus');
-const failureReasonSpan = document.getElementById('failureReason');
-const suggestionsDiv = document.getElementById('suggestions');
+// --- 1. 全局配置与状态追踪 ---
+const elements = {
+    video: document.getElementById('webcamVideo'),
+    canvas: document.getElementById('outputCanvas'),
+    imgUpload: document.getElementById('imageUpload'),
+    status: document.getElementById('systemStatus'),
+    recStatus: document.getElementById('recognitionStatus'),
+    btnStart: document.getElementById('startCameraButton'),
+    btnRecognize: document.getElementById('recognizeButton'),
+    timeLabel: document.getElementById('processingTime'),
+    // 结果面板
+    heartConf: document.getElementById('heartLineConf'),
+    headConf: document.getElementById('headLineConf'),
+    lifeConf: document.getElementById('lifeLineConf')
+};
 
-// --- 2. 全局变量与初始化 ---
-let handLandmarker;
-let videoStream;
-let currentImageSource = null; 
-const modelPath = './models/hand_landmarker.task'; // 确保路径为 ./models/
+let statusTracker = { ai: false, opencv: false };
+let handposeModel, algoWorker;
 
-async function initModel() {
-    try {
-        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm");
-        handLandmarker = await HandLandmarker.createFromOptions(vision, {
-            baseOptions: { modelAssetPath: modelPath, delegate: "GPU" },
-            runningMode: "IMAGE",
-            numHands: 1
-        });
-        recognitionStatusSpan.textContent = "模型就绪";
-    } catch (e) {
-        recognitionStatusSpan.textContent = "模型加载失败";
-        failureReasonSpan.textContent = "请确认 models 目录下存在任务文件";
+// 更新 UI 状态栏
+function updateGlobalStatus() {
+    const aiLabel = statusTracker.ai ? "✅ AI 模型就绪" : "⏳ AI 模型加载中...";
+    const cvLabel = statusTracker.opencv ? "✅ 算法引擎就绪" : "⏳ 算法引擎(WASM)编译中...";
+    
+    elements.status.innerHTML = `<span style="color: ${statusTracker.ai ? '#00ff00':'#ffa500'}">${aiLabel}</span> | 
+                                 <span style="color: ${statusTracker.opencv ? '#00ff00':'#ffa500'}">${cvLabel}</span>`;
+    
+    if (statusTracker.ai && statusTracker.opencv) {
+        elements.btnRecognize.disabled = false;
+        elements.btnRecognize.style.background = "#00d1b2";
+        console.log("系统提示：全引擎初始化完成，可以开始检测。");
     }
 }
-initModel();
 
-// --- 3. 图像输入逻辑 (含 EXIF) ---
-uploadImageInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+// --- 2. 初始化 Worker (含 OpenCV 状态反馈) ---
+const initWorker = () => {
+    const localOpenCVPath = window.location.origin + window.location.pathname.replace(/\/[^\/]*$/, '/') + "opencv.js";
+
+    const workerCode = `
+        let cvReady = false;
+        
+        // 【保留】确认 OpenCV 加载成功的钩子
+        self.cv = {
+            onRuntimeInitialized: () => {
+                console.log("Worker: 🔔 OpenCV 加载成功");
+                cvReady = true;
+                self.postMessage({ type: 'CV_READY' });
+            }
+        };
+
+        try {
+        importScripts("${localOpenCVPath}");
+            // 【保留】二次心跳检测
+            setInterval(() => {
+                if (!cvReady && typeof cv !== 'undefined' && cv.Mat) {
+                    cvReady = true;
+                    self.postMessage({ type: 'CV_READY' });
+                }
+            }, 500);
+        } catch (e) {
+            self.postMessage({ type: 'ERROR', msg: '路径错误: ' + e.message });
+        }
+
+        self.onmessage = async (e) => {
+            const { bitmap, landmarks, width, height } = e.data;
+            if (!cvReady || !bitmap || !landmarks) return;
+
+            const canvas = new OffscreenCanvas(width, height);
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(bitmap, 0, 0);
+            const imgData = ctx.getImageData(0, 0, width, height);
+
+            // --- 5. 环境反馈机制：光线检查 ---
+            let totalBrightness = 0;
+            for(let i=0; i<imgData.data.length; i+=4) {
+                totalBrightness += (imgData.data[i] + imgData.data[i+1] + imgData.data[i+2]) / 3;
+            }
+            const avgBrightness = totalBrightness / (width * height);
+            if (avgBrightness < 40) { self.postMessage({ type: 'ERROR', msg: '环境过暗，请开启闪光灯或移至明亮处' }); return; }
+            if (avgBrightness > 220) { self.postMessage({ type: 'ERROR', msg: '环境过亮或反光，请调整角度' }); return; }
+
+            try {
+                let src = new cv.Mat(height, width, cv.CV_8UC4);
+                src.data.set(imgData.data);
+
+                // --- ROI 严格限域 (解决背景干扰) ---
+                let mask = cv.Mat.zeros(height, width, cv.CV_8UC1);
+                let roiCoords = new Int32Array([
+                    landmarks[5].x, landmarks[5].y, landmarks[9].x, landmarks[9].y,
+                    landmarks[17].x, landmarks[17].y, landmarks[0].x, landmarks[0].y, landmarks[2].x, landmarks[2].y
+                ]);
+                let pts = cv.matFromArray(roiCoords.length/2, 1, cv.CV_32SC2, roiCoords);
+                let ptsVec = new cv.MatVector(); ptsVec.push_back(pts);
+                cv.fillPoly(mask, ptsVec, new cv.Scalar(255));
+                let maskedSrc = new cv.Mat(); src.copyTo(maskedSrc, mask);
+
+                // 图像增强
+                let gray = new cv.Mat(); cv.cvtColor(maskedSrc, gray, cv.COLOR_RGBA2GRAY);
+                let clahe = new cv.CLAHE(5.0, new cv.Size(8, 8));
+                let enhanced = new cv.Mat(); clahe.apply(gray, enhanced);
+                let edges = new cv.Mat(); cv.Canny(enhanced, edges, 25, 60); // 降低阈值提高检出率
+
+                let contours = new cv.MatVector();
+                let hierarchy = new cv.Mat();
+                cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+                const p0 = landmarks[0], p2 = landmarks[2], p5 = landmarks[5], p9 = landmarks[9], p17 = landmarks[17];
+                const hegu = { x: p5.x + (p0.x - p5.x) * 0.5, y: p5.y + (p0.y - p5.y) * 0.5 };
+
+                let results = { 
+                    heart: { path: [], score: 0 }, 
+                    head: { path: [], score: 0 }, 
+                    life: { path: [], score: 0 } 
+                };
+
+                for (let i = 0; i < contours.size(); ++i) {
+                    let cnt = contours.get(i);
+                    let ptsArr = [];
+                    for (let j = 0; j < cnt.data32S.length; j += 2) {
+                        ptsArr.push({ x: cnt.data32S[j], y: cnt.data32S[j+1] });
+                    }
+                    if (ptsArr.length < 20) continue;
+
+                    const start = ptsArr[0];
+                    const mid = ptsArr[Math.floor(ptsArr.length/2)];
+                    const end = ptsArr[ptsArr.length-1];
+
+                    // --- 逻辑微调：解决判错颜色问题 ---
+
+                    // 1. 感情线 (红色): 起于小指下方区域，且整体水平高度高于合谷
+                    let isHeart = (start.x > p17.x - 30) && (mid.y < hegu.y);
+                    if (isHeart) {
+                        results.heart.path = ptsArr;
+                        results.heart.score = Math.min(100, Math.round(ptsArr.length * 1.5));
+                    }
+
+                    // 2. 智慧线 (绿色): 起于食指下方，终点向手掌中部延伸
+                    let isHead = (start.x < p9.x) && (start.y > p5.y - 10) && (mid.y >= hegu.y && mid.y < p0.y);
+                    if (isHead && ptsArr.length > results.head.path.length) {
+                        results.head.path = ptsArr;
+                        results.head.score = Math.min(100, Math.round(ptsArr.length * 1.2));
+                    }
+
+                    // 3. 生命线 (蓝色): 弧形判定，必须包绕 p2 (拇指根)
+                    let isLife = (start.x < p5.x) && (end.y > p0.y - 50) && (mid.x < (p2.x + p5.x)/2);
+                    if (isLife) {
+                        results.life.path = ptsArr;
+                        results.life.score = Math.min(100, Math.round(ptsArr.length * 1.1));
+                    }
+                }
+
+                if (!results.heart.path.length && !results.head.path.length && !results.life.path.length) {
+                    self.postMessage({ type: 'ERROR', msg: '未检测到清晰线条，请尝试侧光照射并保持手掌平齐' });
+                }
+
+                self.postMessage({ type: 'RESULT', results, hegu });
+                
+                // 释放
+                src.delete(); mask.delete(); pts.delete(); ptsVec.delete(); maskedSrc.delete();
+                gray.delete(); enhanced.delete(); edges.delete(); contours.delete(); hierarchy.delete();
+            } catch (err) { self.postMessage({ type: 'ERROR', msg: '算法运行异常' }); }
+        };
+    `;
+
+    const blob = new Blob([workerCode], { type: 'application/javascript' });
+    algoWorker = new Worker(URL.createObjectURL(blob));
+
+    algoWorker.onmessage = (e) => {
+        if (e.data.type === 'CV_READY') { statusTracker.opencv = true; updateGlobalStatus(); }
+        if (e.data.type === 'RESULT') {
+            renderFinal(e.data.results, e.data.hegu);
+            // --- 更新置信度 UI ---
+            updateConfidenceUI(e.data.results);
+        }
+        if (e.data.type === 'ERROR') {
+            showUserFeedback(e.data.msg); // 调用 UI 提示函数
+        }
+    };
+};
+
+// 辅助函数：显示失败原因
+const showUserFeedback = (msg) => {
+    const statusEl = document.getElementById('status-text');
+    if (statusEl) {
+        statusEl.innerText = "识别提醒: " + msg;
+        statusEl.style.color = "#ff4d4d";
+    }
+};
+
+// 辅助函数：更新 UI 置信度
+const updateConfidenceUI = (results) => {
+    if (document.getElementById('heart-score')) {
+        document.getElementById('heart-score').innerText = results.heart.score + "%";
+        document.getElementById('head-score').innerText = results.head.score + "%";
+        document.getElementById('life-score').innerText = results.life.score + "%";
+    }
+};
+
+// --- 3. 初始化 AI ---
+async function setupAI() {
+    try {
+        statusTracker.ai = false;
+        updateGlobalStatus();
+        handposeModel = await handpose.load();
+        statusTracker.ai = true;
+        updateGlobalStatus();
+    } catch (err) {
+        elements.status.textContent = "AI 加载失败: " + err.message;
+    }
+}
+
+// --- 4. 交互触发 ---
+elements.btnStart.onclick = async () => {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        elements.video.srcObject = stream;
+        elements.video.play();
+        initWorker(); // 启动算法 Worker
+        setupAI();    // 启动 AI 模型
+    } catch (err) {
+        alert("请允许摄像头权限以继续。");
+    }
+};
+
+elements.imgUpload.onchange = (e) => {
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = (f) => {
         const img = new Image();
         img.onload = () => {
-            handleExifAndDraw(img, event.target.result);
-            currentImageSource = img;
-            recognizeButton.disabled = false;
+            elements.canvas.width = img.width;
+            elements.canvas.height = img.height;
+            elements.canvas.getContext('2d').drawImage(img, 0, 0);
+            if (!handposeModel) { initWorker(); setupAI(); }
         };
-        img.src = event.target.result;
+        img.src = f.target.result;
     };
-    reader.readAsDataURL(file);
-});
-
-function handleExifAndDraw(img, base64) {
-    let orientation = 1;
-    try { const exif = piexif.load(base64); orientation = exif["0th"][piexif.ImageIFD.Orientation] || 1; } catch (e) {}
-    const { width, height } = img;
-    if ([5, 6, 7, 8].includes(orientation)) { outputCanvas.width = height; outputCanvas.height = width; } 
-    else { outputCanvas.width = width; outputCanvas.height = height; }
-    ctx.save();
-    if (orientation === 6) ctx.transform(0, 1, -1, 0, width, 0);
-    if (orientation === 3) ctx.transform(-1, 0, 0, -1, width, height);
-    if (orientation === 8) ctx.transform(0, -1, 1, 0, 0, height);
-    ctx.drawImage(img, 0, 0);
-    ctx.restore();
-}
-
-startCameraButton.onclick = async () => {
-    videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
-    webcamVideo.srcObject = videoStream;
-    webcamVideo.style.display = 'block';
-    captureButton.style.display = 'inline';
+    reader.readAsDataURL(e.target.files[0]);
 };
 
-captureButton.onclick = () => {
-    outputCanvas.width = webcamVideo.videoWidth;
-    outputCanvas.height = webcamVideo.videoHeight;
-    ctx.drawImage(webcamVideo, 0, 0);
-    currentImageSource = ctx.getImageData(0,0, outputCanvas.width, outputCanvas.height);
-    videoStream.getTracks().forEach(t => t.stop());
-    webcamVideo.style.display = 'none';
-    captureButton.style.display = 'none';
-    recognizeButton.disabled = false;
-};
-
-// --- 4. 核心检测与 ROI 逻辑 ---
-
-function drawExtendedROI(landmarks) {
-    const W = outputCanvas.width;
-    const H = outputCanvas.height;
-    // 使用核心掌纹边界点：腕部(0), 拇指根(2), 食指根(5), 中指根(9), 无名指根(13), 小指根(17)
-    const roiIndices = [0, 2, 5, 9, 13, 17];
+elements.btnRecognize.onclick = async () => {
+    if (!statusTracker.ai || !statusTracker.opencv) return;
     
-    let centerX = 0, centerY = 0;
-    roiIndices.forEach(idx => {
-        centerX += landmarks[idx].x * W;
-        centerY += landmarks[idx].y * H;
-    });
-    centerX /= roiIndices.length;
-    centerY /= roiIndices.length;
-
-    ctx.strokeStyle = "#00ff00";
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    
-    const expansion = 1.10; // 扩大 10%
-
-    roiIndices.forEach((idx, i) => {
-        let x = centerX + (landmarks[idx].x * W - centerX) * expansion;
-        let y = centerY + (landmarks[idx].y * H - centerY) * expansion;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-    });
-    ctx.closePath();
-    ctx.stroke();
-
-    // 虎口修正：大拇指点2与食指点5的中心
-    const hukou = {
-        x: (landmarks[2].x + landmarks[5].x) / 2,
-        y: (landmarks[2].y + landmarks[5].y) / 2
-    };
-    drawSpot(hukou, "虎口区", "#ff0000"); 
-    drawSpot(landmarks[0], "掌根", "#ff0000");
-
-    return hukou;
-}
-
-
-
-function extractPalmLines(landmarks, canvas, hukou, handedness, score) {
-    const W = canvas.width;
-    const H = canvas.height;
-    const isRight = handedness === "Right";
-    
-    // 锚点定义
-    const pWrist = { x: landmarks[0].x * W, y: landmarks[0].y * H };
-    const pPinky = { x: landmarks[17].x * W, y: landmarks[17].y * H };
-    const pIndex = { x: landmarks[5].x * W, y: landmarks[5].y * H };
-    const pHukou = { x: hukou.x * W, y: hukou.y * H };
-
-    // 左右手偏移修正
-    const shift = isRight ? -20 : 20;
-
-    return {
-        heart: { 
-            // 感情线：起于小指下方边缘
-            path: [[pPinky.x, pPinky.y + 30], [W * 0.5, pPinky.y], [pIndex.x + shift, pIndex.y + 40]], 
-            conf: (score * 0.92).toFixed(2), 
-            color: "#ff0000" 
-        },
-        head: { 
-            // 智慧线：起于虎口，横穿掌心
-            path: [[pHukou.x, pHukou.y], [W * 0.5, H * 0.5], [pPinky.x, pPinky.y + 120]], 
-            conf: (score * 0.88).toFixed(2), 
-            color: "#0000ff" 
-        },
-        life: { 
-            // 生命线：起于虎口，环绕拇指
-            path: [[pHukou.x, pHukou.y], [landmarks[2].x * W + shift * 3, H * 0.75], [pWrist.x, pWrist.y - 10]], 
-            conf: (score * 0.95).toFixed(2), 
-            color: "#ffff00" 
-        }
-    };
-}
-
-// --- 5. 识别主入口 ---
-recognizeButton.onclick = async () => {
     const startTime = performance.now();
-    recognitionStatusSpan.textContent = "识别中...";
+    elements.recStatus.textContent = "正在捕捉手掌形态...";
     
-    const results = handLandmarker.detect(outputCanvas);
-    
-    if (!results.landmarks || results.landmarks.length === 0) {
-        showFailure("未检测到手", "请确保手掌清晰且位于中心。");
-        return;
+    const source = elements.video.srcObject ? elements.video : elements.canvas;
+    if (elements.video.srcObject) {
+        elements.canvas.width = elements.video.videoWidth;
+        elements.canvas.height = elements.video.videoHeight;
+        elements.canvas.getContext('2d').drawImage(elements.video, 0, 0);
     }
 
-    const landmarks = results.landmarks[0];
-    const handedness = results.handednesses[0][0].categoryName;
-    const score = results.handednesses[0][0].score;
+    const predictions = await handposeModel.estimateHands(source);
 
-    // 手心手背判断
-    if (results.worldLandmarks[0][0].z > 0.12) {
-        showFailure("不是手掌部分", "请展示手心而非手背。");
-        return;
+    if (predictions.length > 0) {
+        const landmarks = predictions[0].landmarks;
+        const bitmap = await createImageBitmap(elements.canvas);
+        
+        algoWorker.postMessage({
+            bitmap,
+            landmarks: landmarks.map(p => ({ x: p[0], y: p[1] })),
+            width: elements.canvas.width,
+            height: elements.canvas.height
+        }, [bitmap]);
+
+        elements.timeLabel.dataset.start = startTime;
+    } else {
+        elements.recStatus.textContent = "未检测到手掌，请调整姿势。";
     }
-
-    // 绘制 ROI 并提取虎口
-    const hPoint = drawExtendedROI(landmarks);
-
-    // 线条拟合
-    const lines = extractPalmLines(landmarks, outputCanvas, hPoint, handedness, score);
-
-    // 结果渲染
-    renderResults(lines, startTime);
 };
 
-function drawSpot(lm, text, color) {
-    const x = lm.x * outputCanvas.width;
-    const y = lm.y * outputCanvas.height;
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(x, y, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.font = "bold 14px Arial";
-    ctx.fillText(text, x + 10, y + 5);
+// --- 5. 最终渲染 ---
+function renderFinal(res, hegu) {
+    const ctx = elements.canvas.getContext('2d');
+    
+    // 绘制合谷点 (金色)
+    ctx.fillStyle = "#FFD700";
+    ctx.beginPath(); ctx.arc(hegu.x, hegu.y, 8, 0, Math.PI * 2); ctx.fill();
+
+    const drawLine = (path, color) => {
+        if (!path || path.length < 2) return;
+        ctx.strokeStyle = color; ctx.lineWidth = 5; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(path[0].x, path[0].y);
+        path.forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke();
+    };
+
+    drawLine(res.heart.path, "#FF3B30"); // 感情线
+    drawLine(res.head.path, "#4CD964");  // 智慧线
+    drawLine(res.life.path, "#007AFF");  // 生命线
+
+    const duration = performance.now() - parseFloat(elements.timeLabel.dataset.start);
+    elements.timeLabel.textContent = Math.round(duration) + " ms";
+    elements.recStatus.textContent = "✅ 分析完成";
+
+    // 同步 UI 进度
+    elements.heartConf.textContent = res.heart.score + "%";
+    elements.headConf.textContent = res.head.score + "%";
+    elements.lifeConf.textContent = res.life.score + "%";
 }
-
-function renderResults(lines, startTime) {
-    Object.values(lines).forEach(line => {
-        ctx.strokeStyle = line.color;
-        ctx.lineWidth = 4;
-        ctx.setLineDash([5, 5]); // 表示拟合
-        ctx.beginPath();
-        ctx.moveTo(line.path[0][0], line.path[0][1]);
-        if(line.path.length === 3) {
-            ctx.quadraticCurveTo(line.path[1][0], line.path[1][1], line.path[2][0], line.path[2][1]);
-        }
-        ctx.stroke();
-    });
-
-    const duration = (performance.now() - startTime).toFixed(0);
-    processingTimeSpan.textContent = `${duration} ms`;
-    heartLineConfSpan.textContent = `${(lines.heart.conf * 100).toFixed(1)}%`;
-    headLineConfSpan.textContent = `${(lines.head.conf * 100).toFixed(1)}%`;
-    lifeLineConfSpan.textContent = `${(lines.life.conf * 100).toFixed(1)}%`;
-    recognitionStatusSpan.textContent = "识别完成";
-}
-
-function showFailure(reason, suggestion) {
-    recognitionStatusSpan.textContent = "识别失败";
-    failureReasonSpan.textContent = reason;
-    suggestionsDiv.textContent = suggestion;
-}
-
-resetButton.onclick = () => location.reload();

@@ -1,5 +1,0 @@
-streamlit>=1.41.0
-opencv-python>=4.10.0.0
-numpy>=1.26.0
-Pillow>=10.0.0
-

@@ -22,3 +22,10 @@
 2.  使用 Cursor 的终端运行 `python -m http.server 8000`。
 3.  在浏览器打开 `localhost:8000`。
 4.  建议在充足光线下测试，确保掌纹清晰可见。
+
+阶段,采用方法,结果,失败原因分析
+1. 基础版,主线程同步加载所有库,卡死 (100% CPU),WASM 编译是 CPU 密集型任务，强行占用 UI 线程导致画面完全停滞。
+2. 异步版,setTimeout & 异步加载,依然卡死,WASM 编译是原子操作，一旦开始，浏览器无法在中途强行切换任务。
+3. Worker 版 (v1),importScripts 引入库,报错 (SyntaxError),现代库（MediaPipe）使用了 ES Module 语法，而传统 Worker 脚本不支持 export。
+4. Worker 版 (v2),"type: ""module"" Worker",报错 (Security),模块化 Worker 不允许跨域加载库脚本，且与旧版 importScripts 冲突。
+5. 内联 Blob 版,将代码转为 Blob 运行,报错 (CORS/Network),库内部尝试加载 .wasm 二进制文件时，因路径不匹配被浏览器拦截。
