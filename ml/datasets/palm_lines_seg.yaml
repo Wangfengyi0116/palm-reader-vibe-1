@@ -1,0 +1,10 @@
+path: ./data/seg
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: palm
+  1: heart_line
+  2: head_line
+  3: life_line

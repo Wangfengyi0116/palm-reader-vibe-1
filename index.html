@@ -3,163 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 掌纹特征深度分析系统</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose"></script>
-    <script src="https://cdn.jsdelivr.net/npm/fingerpose@0.1.0/dist/fingerpose.min.js"></script>
-    <script async src="https://docs.opencv.org/4.5.0/opencv.js"></script>
-    
-    <style>
-        :root {
-            --primary: #00d1b2;
-            --bg-dark: #1a1a1a;
-            --panel-bg: #2d2d2d;
-            --text: #e0e0e0;
-        }
-
-        body {
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            background-color: var(--bg-dark);
-            color: var(--text);
-            margin: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            min-height: 100vh;
-        }
-
-        .container {
-            width: 95%;
-            max-width: 1000px;
-            padding: 20px;
-            display: grid;
-            grid-template-columns: 1fr 300px;
-            gap: 20px;
-        }
-
-        header {
-            grid-column: 1 / -1;
-            text-align: center;
-            padding-bottom: 20px;
-            border-bottom: 1px solid #444;
-        }
-
-        /* 核心显示区域 */
-        .display-area {
-            position: relative;
-            background: #000;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            aspect-ratio: 4 / 3;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        #webcamVideo {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            transform: scaleX(-1); /* 镜像显示符合直觉 */
-        }
-
-        #outputCanvas {
-            position: absolute;
-            z-index: 10;
-            max-width: 100%;
-            max-height: 100%;
-        }
-
-        /* 右侧控制面板 */
-        .side-panel {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-        }
-
-        .card {
-            background: var(--panel-bg);
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #444;
-        }
-
-        .status-badge {
-            font-size: 0.85rem;
-            padding: 4px 8px;
-            border-radius: 4px;
-            background: #444;
-        }
-
-        button {
-            background: var(--primary);
-            color: #000;
-            border: none;
-            padding: 12px;
-            border-radius: 6px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: 0.3s;
-        }
-
-        button:disabled {
-            background: #555;
-            cursor: not-allowed;
-        }
-
-        button:hover:not(:disabled) {
-            filter: brightness(1.1);
-            transform: translateY(-2px);
-        }
-
-        .upload-btn {
-            background: transparent;
-            border: 1px dashed var(--primary);
-            color: var(--primary);
-            position: relative;
-        }
-
-        input[type="file"] {
-            position: absolute;
-            opacity: 0;
-            inset: 0;
-            cursor: pointer;
-        }
-
-        /* 结果数据显示 */
-        .line-item {
-            margin: 10px 0;
-        }
-        .line-label {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 5px;
-            font-size: 0.9rem;
-        }
-        .progress-bar {
-            height: 6px;
-            background: #444;
-            border-radius: 3px;
-            overflow: hidden;
-        }
-        .progress-fill {
-            height: 100%;
-            width: 0%;
-            transition: width 0.5s ease;
-        }
-
-        @media (max-width: 768px) {
-            .container { grid-template-columns: 1fr; }
-        }
-    </style>
+    <title>PalmSense Pro - 深度学习版</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
 <header>
     <h1>PalmSense <span style="color:var(--primary)">Pro</span></h1>
-    <div id="systemStatus">等待启动...</div>
+    <div id="systemStatus">等待模型服务连接...</div>
 </header>
 
 <div class="container">
@@ -181,20 +31,18 @@
         <div class="card">
             <h3>识别操作</h3>
             <button id="recognizeButton" disabled style="width: 100%;">执行深度分析</button>
-            <p id="recognitionStatus" style="font-size: 0.8rem; margin-top: 10px; color: #aaa;">
-                请确保手掌平放且张开
-            </p>
+            <p id="recognitionStatus">请先启动后端 API 服务</p>
         </div>
 
         <div class="card">
             <h3>分析数据</h3>
-            <p style="font-size: 0.8rem;">耗时: <span id="processingTime">0</span></p>
-            
+            <p class="meta">耗时: <span id="processingTime">0 ms</span></p>
+
             <div class="line-item">
                 <div class="line-label"><span>感情线 (Heart)</span><span id="heartLineConf">0%</span></div>
                 <div class="progress-bar"><div id="bar-heart" class="progress-fill" style="background: #FF3B30"></div></div>
             </div>
-            
+
             <div class="line-item">
                 <div class="line-label"><span>智慧线 (Head)</span><span id="headLineConf">0%</span></div>
                 <div class="progress-bar"><div id="bar-head" class="progress-fill" style="background: #4CD964"></div></div>
@@ -204,29 +52,17 @@
                 <div class="line-label"><span>生命线 (Life)</span><span id="lifeLineConf">0%</span></div>
                 <div class="progress-bar"><div id="bar-life" class="progress-fill" style="background: #007AFF"></div></div>
             </div>
+
+            <div class="line-item">
+                <div class="line-label"><span>失败原因分析</span></div>
+                <ul id="reasonList" class="reason-list">
+                    <li>等待识别结果...</li>
+                </ul>
+            </div>
         </div>
     </div>
 </div>
 
 <script src="script.js"></script>
-
-<script>
-    // 简单的 UI 联动脚本，配合 script.js 使用
-    function updateProgressUI(id, val) {
-        document.getElementById('bar-' + id).style.width = val + '%';
-    }
-    
-    // 监听识别状态，同步更新进度条动画
-    const observer = new MutationObserver(() => {
-        updateProgressUI('heart', parseInt(document.getElementById('heartLineConf').textContent));
-        updateProgressUI('head', parseInt(document.getElementById('headLineConf').textContent));
-        updateProgressUI('life', parseInt(document.getElementById('lifeLineConf').textContent));
-    });
-    
-    ['heartLineConf', 'headLineConf', 'lifeLineConf'].forEach(id => {
-        observer.observe(document.getElementById(id), { characterData: true, childList: true });
-    });
-</script>
-
 </body>
 </html>

@@ -1,124 +1,161 @@
-body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background-color: #f0f2f5;
-    color: #333;
-    margin: 0;
-    padding: 20px;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    min-height: 100vh;
+:root {
+    --primary: #00d1b2;
+    --bg-dark: #1a1a1a;
+    --panel-bg: #2d2d2d;
+    --text: #e0e0e0;
+}
+
+* {
     box-sizing: border-box;
 }
 
-.container {
-    background-color: #fff;
-    padding: 30px;
-    border-radius: 12px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
-    width: 100%;
-    max-width: 960px;
+body {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    background-color: var(--bg-dark);
+    color: var(--text);
+    margin: 0;
     display: flex;
     flex-direction: column;
-    gap: 25px;
+    align-items: center;
+    min-height: 100vh;
 }
 
-h1, h2 {
-    color: #0056b3;
+header {
+    width: 95%;
+    max-width: 1000px;
     text-align: center;
-    margin-bottom: 20px;
+    padding: 24px 0 18px;
+    border-bottom: 1px solid #444;
 }
 
-.controls {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 15px;
-    justify-content: center;
-    align-items: center;
-    margin-bottom: 20px;
+.container {
+    width: 95%;
+    max-width: 1000px;
+    padding: 20px 0 26px;
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 20px;
 }
 
-.button, button, input[type="file"]::file-selector-button {
-    background-color: #007bff;
-    color: white;
-    border: none;
-    padding: 12px 25px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 16px;
-    transition: background-color 0.3s ease, transform 0.1s ease;
-    box-shadow: 0 4px 10px rgba(0, 123, 255, 0.2);
-}
-
-.button:hover, button:hover, input[type="file"]::file-selector-button:hover {
-    background-color: #0056b3;
-    transform: translateY(-2px);
-}
-
-.button:active, button:active {
-    transform: translateY(0);
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-}
-
-button:disabled {
-    background-color: #cccccc;
-    cursor: not-allowed;
-    box-shadow: none;
-}
-
-input[type="file"] {
-    display: none; /* Hide default input */
-}
-
-.video-container {
+.display-area {
     position: relative;
-    width: 100%;
-    /* Maintain aspect ratio if needed, e.g., padding-bottom: 75%; */
-    background-color: #e9ecef;
-    border-radius: 8px;
+    background: #000;
+    border-radius: 12px;
     overflow: hidden;
-    min-height: 300px; /* Ensure some visibility even if no content */
-    display: flex;
-    justify-content: center;
-    align-items: center;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    aspect-ratio: 4 / 3;
 }
 
-#webcamVideo, #outputCanvas {
-    max-width: 100%;
-    max-height: 600px;
-    display: block;
-    object-fit: contain; /* Ensures the entire video/image is visible */
-    border-radius: 8px;
+#webcamVideo,
+#outputCanvas {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 #webcamVideo {
-    transform: scaleX(-1); /* Mirror the webcam video */
+    transform: scaleX(-1);
 }
 
-.results-panel {
-    background-color: #f8f9fa;
-    border: 1px solid #dee2e6;
+#outputCanvas {
+    z-index: 10;
+}
+
+.side-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.card {
+    background: var(--panel-bg);
+    padding: 15px;
     border-radius: 8px;
-    padding: 20px;
-    margin-top: 20px;
+    border: 1px solid #444;
 }
 
-.results-panel p {
-    margin-bottom: 8px;
-    line-height: 1.6;
+button {
+    background: var(--primary);
+    color: #000;
+    border: none;
+    padding: 12px;
+    border-radius: 6px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: 0.3s;
 }
 
-.results-panel strong {
-    color: #555;
+button:disabled {
+    background: #555;
+    cursor: not-allowed;
 }
 
-.error-message {
-    color: #dc3545;
-    font-weight: bold;
+button:hover:not(:disabled) {
+    filter: brightness(1.1);
+    transform: translateY(-2px);
 }
 
-.suggestion-message {
-    color: #28a745;
-    font-style: italic;
+.upload-btn {
+    background: transparent;
+    border: 1px dashed var(--primary);
+    color: var(--primary);
+    position: relative;
+}
+
+input[type="file"] {
+    position: absolute;
+    opacity: 0;
+    inset: 0;
+    cursor: pointer;
+}
+
+.line-item {
+    margin: 10px 0;
+}
+
+.line-label {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    font-size: 0.9rem;
+}
+
+.progress-bar {
+    height: 6px;
+    background: #444;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    width: 0;
+    transition: width 0.5s ease;
+}
+
+.reason-list {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    color: #ffdfdf;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    max-height: 170px;
+    overflow: auto;
+}
+
+#recognitionStatus {
+    font-size: 0.8rem;
     margin-top: 10px;
+    color: #aaa;
+}
+
+.meta {
+    font-size: 0.8rem;
+}
+
+@media (max-width: 768px) {
+    .container {
+        grid-template-columns: 1fr;
+    }
 }

@@ -1,31 +1,50 @@
-# 掌纹主线自动化识别系统 (MVP)
+# 掌纹主线自动化识别系统
 
-本课题旨在通过前端技术与 AI 模型结合，实现手机端拍照/导入手掌照片后，自动提取掌纹三大主线（感情线、智慧线、生命线）并进行可视化展示。
+当前版本已从前端启发式识别升级为 **YOLO 后端推理 + 前端可视化** 架构。
 
-## 功能特性
-* **多模式输入**：支持调用摄像头实时拍照截图及本地图片导入。
-* **EXIF 自动校正**：解决手机拍摄照片上传后出现的横竖颠倒问题。
-* **AI 关键点定位**：集成 MediaPipe Hands，精准识别掌根、虎口等 21 个手部关键点。
-* **ROI 与 轮廓绘制**：自动提取掌心区域并绘制手掌边缘轮廓。
-* **主线提取算法**：结合手部解剖学模型与图像增强技术，拟合生成三大主线。
-* **异常处理**：针对“未检测到手”、“手背拍摄”、“光线过暗”等场景提供明确的错误反馈。
+## 当前能力
 
-## 目录结构
-- `index.html` - 主界面结构
-- `script.js` - 核心算法逻辑（含 MediaPipe 初始化与掌纹拟合）
-- `style.css` - 响应式交互样式
-- `models/` - 存放 `hand_landmarker.task` 模型文件
-- `docs/design.md` - 技术实现方案与调研报告
+- 支持摄像头实时采集与本地图片上传
+- 识别并绘制：手掌区域、感情线、智慧线、生命线、虎口点
+- 输出三线置信度与推理耗时
+- 给出详细失败原因（过暗、过亮、模糊、手掌未检测、部分线缺失等）
 
-## 开发者快速上手
-1.  确保 `models/hand_landmarker.task` 已下载并放置。
-2.  使用 Cursor 的终端运行 `python -m http.server 8000`。
-3.  在浏览器打开 `localhost:8000`。
-4.  建议在充足光线下测试，确保掌纹清晰可见。
+## 项目结构
 
-阶段,采用方法,结果,失败原因分析
-1. 基础版,主线程同步加载所有库,卡死 (100% CPU),WASM 编译是 CPU 密集型任务，强行占用 UI 线程导致画面完全停滞。
-2. 异步版,setTimeout & 异步加载,依然卡死,WASM 编译是原子操作，一旦开始，浏览器无法在中途强行切换任务。
-3. Worker 版 (v1),importScripts 引入库,报错 (SyntaxError),现代库（MediaPipe）使用了 ES Module 语法，而传统 Worker 脚本不支持 export。
-4. Worker 版 (v2),"type: ""module"" Worker",报错 (Security),模块化 Worker 不允许跨域加载库脚本，且与旧版 importScripts 冲突。
-5. 内联 Blob 版,将代码转为 Blob 运行,报错 (CORS/Network),库内部尝试加载 .wasm 二进制文件时，因路径不匹配被浏览器拦截。
+- `index.html`：前端页面结构
+- `script.js`：前端交互与 API 调用（`/api/health`、`/api/infer`）
+- `style.css`：前端样式
+- `ml/train.py`：YOLO 训练脚本（分割 + 关键点）
+- `ml/infer.py`：离线推理脚本（输出可视化与 JSON）
+- `ml/api.py`：FastAPI 推理服务
+- `ml/datasets/*.yaml`：数据配置模板
+- `ml/README.md`：ML 子模块说明
+- `docs/design.md`：设计文档
+
+## 快速启动
+
+### 1) 启动后端推理服务
+
+```bash
+cd ml
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn api:app --host 0.0.0.0 --port 8001
+```
+
+### 2) 启动前端
+
+```bash
+cd ..
+python -m http.server 8000
+```
+
+浏览器打开：`http://localhost:8000`
+
+## 今日修改（2026-03-30）
+
+- 重建 `ml/` 深度学习模块（训练、推理、API、数据配置）
+- 前端改造为调用后端 YOLO 推理接口（移除前端模型推理链路）
+- 清理本地模型与缓存，减轻项目负担（当前仓库无本地模型权重文件）
+- 新增并更新 `CHANGELOG.md` 记录变更详情

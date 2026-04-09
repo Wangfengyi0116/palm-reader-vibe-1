@@ -1,305 +1,190 @@
-/**
- * script.js - 全状态感知 & 精准解剖定位版
- * 功能：TF.js Handpose + Fingerpose + OpenCV Worker
- * 核心逻辑：以食指掌骨(p5-p0)中点定位合谷，并追踪三条主线
- */
+const API_BASE = "http://127.0.0.1:8001";
 
-// --- 1. 全局配置与状态追踪 ---
 const elements = {
-    video: document.getElementById('webcamVideo'),
-    canvas: document.getElementById('outputCanvas'),
-    imgUpload: document.getElementById('imageUpload'),
-    status: document.getElementById('systemStatus'),
-    recStatus: document.getElementById('recognitionStatus'),
-    btnStart: document.getElementById('startCameraButton'),
-    btnRecognize: document.getElementById('recognizeButton'),
-    timeLabel: document.getElementById('processingTime'),
-    // 结果面板
-    heartConf: document.getElementById('heartLineConf'),
-    headConf: document.getElementById('headLineConf'),
-    lifeConf: document.getElementById('lifeLineConf')
+    video: document.getElementById("webcamVideo"),
+    canvas: document.getElementById("outputCanvas"),
+    imgUpload: document.getElementById("imageUpload"),
+    status: document.getElementById("systemStatus"),
+    recStatus: document.getElementById("recognitionStatus"),
+    btnStart: document.getElementById("startCameraButton"),
+    btnRecognize: document.getElementById("recognizeButton"),
+    timeLabel: document.getElementById("processingTime"),
+    heartConf: document.getElementById("heartLineConf"),
+    headConf: document.getElementById("headLineConf"),
+    lifeConf: document.getElementById("lifeLineConf"),
+    reasonList: document.getElementById("reasonList"),
 };
 
-let statusTracker = { ai: false, opencv: false };
-let handposeModel, algoWorker;
+let latestImageBlob = null;
 
-// 更新 UI 状态栏
-function updateGlobalStatus() {
-    const aiLabel = statusTracker.ai ? "✅ AI 模型就绪" : "⏳ AI 模型加载中...";
-    const cvLabel = statusTracker.opencv ? "✅ 算法引擎就绪" : "⏳ 算法引擎(WASM)编译中...";
-    
-    elements.status.innerHTML = `<span style="color: ${statusTracker.ai ? '#00ff00':'#ffa500'}">${aiLabel}</span> | 
-                                 <span style="color: ${statusTracker.opencv ? '#00ff00':'#ffa500'}">${cvLabel}</span>`;
-    
-    if (statusTracker.ai && statusTracker.opencv) {
-        elements.btnRecognize.disabled = false;
-        elements.btnRecognize.style.background = "#00d1b2";
-        console.log("系统提示：全引擎初始化完成，可以开始检测。");
+function setStatus(text, ok = true) {
+    elements.status.textContent = text;
+    elements.status.style.color = ok ? "#00d1b2" : "#ff6b6b";
+}
+
+function updateProgressUI(id, val) {
+    const bar = document.getElementById("bar-" + id);
+    if (bar) {
+        bar.style.width = `${Math.max(0, Math.min(100, val))}%`;
     }
 }
 
-// --- 2. 初始化 Worker (含 OpenCV 状态反馈) ---
-const initWorker = () => {
-    const localOpenCVPath = window.location.origin + window.location.pathname.replace(/\/[^\/]*$/, '/') + "opencv.js";
-
-    const workerCode = `
-        let cvReady = false;
-        
-        // 【保留】确认 OpenCV 加载成功的钩子
-        self.cv = {
-            onRuntimeInitialized: () => {
-                console.log("Worker: 🔔 OpenCV 加载成功");
-                cvReady = true;
-                self.postMessage({ type: 'CV_READY' });
-            }
-        };
-
-        try {
-        importScripts("${localOpenCVPath}");
-            // 【保留】二次心跳检测
-            setInterval(() => {
-                if (!cvReady && typeof cv !== 'undefined' && cv.Mat) {
-                    cvReady = true;
-                    self.postMessage({ type: 'CV_READY' });
-                }
-            }, 500);
-        } catch (e) {
-            self.postMessage({ type: 'ERROR', msg: '路径错误: ' + e.message });
-        }
-
-        self.onmessage = async (e) => {
-            const { bitmap, landmarks, width, height } = e.data;
-            if (!cvReady || !bitmap || !landmarks) return;
-
-            const canvas = new OffscreenCanvas(width, height);
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(bitmap, 0, 0);
-            const imgData = ctx.getImageData(0, 0, width, height);
-
-            // --- 5. 环境反馈机制：光线检查 ---
-            let totalBrightness = 0;
-            for(let i=0; i<imgData.data.length; i+=4) {
-                totalBrightness += (imgData.data[i] + imgData.data[i+1] + imgData.data[i+2]) / 3;
-            }
-            const avgBrightness = totalBrightness / (width * height);
-            if (avgBrightness < 40) { self.postMessage({ type: 'ERROR', msg: '环境过暗，请开启闪光灯或移至明亮处' }); return; }
-            if (avgBrightness > 220) { self.postMessage({ type: 'ERROR', msg: '环境过亮或反光，请调整角度' }); return; }
-
-            try {
-                let src = new cv.Mat(height, width, cv.CV_8UC4);
-                src.data.set(imgData.data);
-
-                // --- ROI 严格限域 (解决背景干扰) ---
-                let mask = cv.Mat.zeros(height, width, cv.CV_8UC1);
-                let roiCoords = new Int32Array([
-                    landmarks[5].x, landmarks[5].y, landmarks[9].x, landmarks[9].y,
-                    landmarks[17].x, landmarks[17].y, landmarks[0].x, landmarks[0].y, landmarks[2].x, landmarks[2].y
-                ]);
-                let pts = cv.matFromArray(roiCoords.length/2, 1, cv.CV_32SC2, roiCoords);
-                let ptsVec = new cv.MatVector(); ptsVec.push_back(pts);
-                cv.fillPoly(mask, ptsVec, new cv.Scalar(255));
-                let maskedSrc = new cv.Mat(); src.copyTo(maskedSrc, mask);
-
-                // 图像增强
-                let gray = new cv.Mat(); cv.cvtColor(maskedSrc, gray, cv.COLOR_RGBA2GRAY);
-                let clahe = new cv.CLAHE(5.0, new cv.Size(8, 8));
-                let enhanced = new cv.Mat(); clahe.apply(gray, enhanced);
-                let edges = new cv.Mat(); cv.Canny(enhanced, edges, 25, 60); // 降低阈值提高检出率
-
-                let contours = new cv.MatVector();
-                let hierarchy = new cv.Mat();
-                cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-                const p0 = landmarks[0], p2 = landmarks[2], p5 = landmarks[5], p9 = landmarks[9], p17 = landmarks[17];
-                const hegu = { x: p5.x + (p0.x - p5.x) * 0.5, y: p5.y + (p0.y - p5.y) * 0.5 };
-
-                let results = { 
-                    heart: { path: [], score: 0 }, 
-                    head: { path: [], score: 0 }, 
-                    life: { path: [], score: 0 } 
-                };
-
-                for (let i = 0; i < contours.size(); ++i) {
-                    let cnt = contours.get(i);
-                    let ptsArr = [];
-                    for (let j = 0; j < cnt.data32S.length; j += 2) {
-                        ptsArr.push({ x: cnt.data32S[j], y: cnt.data32S[j+1] });
-                    }
-                    if (ptsArr.length < 20) continue;
-
-                    const start = ptsArr[0];
-                    const mid = ptsArr[Math.floor(ptsArr.length/2)];
-                    const end = ptsArr[ptsArr.length-1];
-
-                    // --- 逻辑微调：解决判错颜色问题 ---
-
-                    // 1. 感情线 (红色): 起于小指下方区域，且整体水平高度高于合谷
-                    let isHeart = (start.x > p17.x - 30) && (mid.y < hegu.y);
-                    if (isHeart) {
-                        results.heart.path = ptsArr;
-                        results.heart.score = Math.min(100, Math.round(ptsArr.length * 1.5));
-                    }
-
-                    // 2. 智慧线 (绿色): 起于食指下方，终点向手掌中部延伸
-                    let isHead = (start.x < p9.x) && (start.y > p5.y - 10) && (mid.y >= hegu.y && mid.y < p0.y);
-                    if (isHead && ptsArr.length > results.head.path.length) {
-                        results.head.path = ptsArr;
-                        results.head.score = Math.min(100, Math.round(ptsArr.length * 1.2));
-                    }
-
-                    // 3. 生命线 (蓝色): 弧形判定，必须包绕 p2 (拇指根)
-                    let isLife = (start.x < p5.x) && (end.y > p0.y - 50) && (mid.x < (p2.x + p5.x)/2);
-                    if (isLife) {
-                        results.life.path = ptsArr;
-                        results.life.score = Math.min(100, Math.round(ptsArr.length * 1.1));
-                    }
-                }
-
-                if (!results.heart.path.length && !results.head.path.length && !results.life.path.length) {
-                    self.postMessage({ type: 'ERROR', msg: '未检测到清晰线条，请尝试侧光照射并保持手掌平齐' });
-                }
-
-                self.postMessage({ type: 'RESULT', results, hegu });
-                
-                // 释放
-                src.delete(); mask.delete(); pts.delete(); ptsVec.delete(); maskedSrc.delete();
-                gray.delete(); enhanced.delete(); edges.delete(); contours.delete(); hierarchy.delete();
-            } catch (err) { self.postMessage({ type: 'ERROR', msg: '算法运行异常' }); }
-        };
-    `;
-
-    const blob = new Blob([workerCode], { type: 'application/javascript' });
-    algoWorker = new Worker(URL.createObjectURL(blob));
-
-    algoWorker.onmessage = (e) => {
-        if (e.data.type === 'CV_READY') { statusTracker.opencv = true; updateGlobalStatus(); }
-        if (e.data.type === 'RESULT') {
-            renderFinal(e.data.results, e.data.hegu);
-            // --- 更新置信度 UI ---
-            updateConfidenceUI(e.data.results);
-        }
-        if (e.data.type === 'ERROR') {
-            showUserFeedback(e.data.msg); // 调用 UI 提示函数
-        }
-    };
-};
-
-// 辅助函数：显示失败原因
-const showUserFeedback = (msg) => {
-    const statusEl = document.getElementById('status-text');
-    if (statusEl) {
-        statusEl.innerText = "识别提醒: " + msg;
-        statusEl.style.color = "#ff4d4d";
+function drawPolygon(ctx, polygon, strokeColor, fillColor) {
+    if (!polygon || polygon.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(polygon[0][0], polygon[0][1]);
+    for (let i = 1; i < polygon.length; i += 1) {
+        ctx.lineTo(polygon[i][0], polygon[i][1]);
     }
-};
+    ctx.closePath();
+    ctx.fillStyle = fillColor;
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 3;
+    ctx.fill();
+    ctx.stroke();
+}
 
-// 辅助函数：更新 UI 置信度
-const updateConfidenceUI = (results) => {
-    if (document.getElementById('heart-score')) {
-        document.getElementById('heart-score').innerText = results.heart.score + "%";
-        document.getElementById('head-score').innerText = results.head.score + "%";
-        document.getElementById('life-score').innerText = results.life.score + "%";
+function drawPrediction(predictions) {
+    const ctx = elements.canvas.getContext("2d");
+    if (!ctx) return;
+
+    if (predictions.palm?.detected) {
+        drawPolygon(ctx, predictions.palm.polygon, "rgb(255,255,0)", "rgba(255,255,0,0.10)");
     }
-};
+    if (predictions.heart_line?.detected) {
+        drawPolygon(ctx, predictions.heart_line.polygon, "rgb(255,59,48)", "rgba(255,59,48,0.20)");
+    }
+    if (predictions.head_line?.detected) {
+        drawPolygon(ctx, predictions.head_line.polygon, "rgb(76,217,100)", "rgba(76,217,100,0.20)");
+    }
+    if (predictions.life_line?.detected) {
+        drawPolygon(ctx, predictions.life_line.polygon, "rgb(0,122,255)", "rgba(0,122,255,0.20)");
+    }
 
-// --- 3. 初始化 AI ---
-async function setupAI() {
-    try {
-        statusTracker.ai = false;
-        updateGlobalStatus();
-        handposeModel = await handpose.load();
-        statusTracker.ai = true;
-        updateGlobalStatus();
-    } catch (err) {
-        elements.status.textContent = "AI 加载失败: " + err.message;
+    if (predictions.hegu?.detected && predictions.hegu.point?.length === 2) {
+        const [x, y] = predictions.hegu.point;
+        ctx.fillStyle = "#ffd700";
+        ctx.beginPath();
+        ctx.arc(x, y, 7, 0, Math.PI * 2);
+        ctx.fill();
     }
 }
 
-// --- 4. 交互触发 ---
+function setScores(predictions) {
+    const heart = Math.round((predictions.heart_line?.confidence || 0) * 100);
+    const head = Math.round((predictions.head_line?.confidence || 0) * 100);
+    const life = Math.round((predictions.life_line?.confidence || 0) * 100);
+    elements.heartConf.textContent = `${heart}%`;
+    elements.headConf.textContent = `${head}%`;
+    elements.lifeConf.textContent = `${life}%`;
+    updateProgressUI("heart", heart);
+    updateProgressUI("head", head);
+    updateProgressUI("life", life);
+}
+
+function setReasons(reasons) {
+    elements.reasonList.innerHTML = "";
+    if (!reasons || reasons.length === 0) {
+        const li = document.createElement("li");
+        li.textContent = "识别通过：未检测到明显异常。";
+        elements.reasonList.appendChild(li);
+        return;
+    }
+    reasons.forEach((reason) => {
+        const li = document.createElement("li");
+        li.textContent = `${reason.code}: ${reason.message}`;
+        elements.reasonList.appendChild(li);
+    });
+}
+
+function canvasToBlob(canvas) {
+    return new Promise((resolve) => {
+        canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.95);
+    });
+}
+
+async function callInferenceApi(imageBlob) {
+    const formData = new FormData();
+    formData.append("file", imageBlob, "palm.jpg");
+    const resp = await fetch(`${API_BASE}/api/infer`, {
+        method: "POST",
+        body: formData,
+    });
+    if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`推理失败(${resp.status}): ${txt}`);
+    }
+    return resp.json();
+}
+
 elements.btnStart.onclick = async () => {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         elements.video.srcObject = stream;
-        elements.video.play();
-        initWorker(); // 启动算法 Worker
-        setupAI();    // 启动 AI 模型
-    } catch (err) {
-        alert("请允许摄像头权限以继续。");
+        await elements.video.play();
+        elements.btnRecognize.disabled = false;
+        setStatus("摄像头就绪，后端模型待调用。");
+        elements.recStatus.textContent = "实时画面已开启，可点击执行深度分析。";
+    } catch (_err) {
+        setStatus("摄像头权限失败，请允许访问摄像头。", false);
     }
 };
 
-elements.imgUpload.onchange = (e) => {
-    const reader = new FileReader();
-    reader.onload = (f) => {
-        const img = new Image();
-        img.onload = () => {
-            elements.canvas.width = img.width;
-            elements.canvas.height = img.height;
-            elements.canvas.getContext('2d').drawImage(img, 0, 0);
-            if (!handposeModel) { initWorker(); setupAI(); }
-        };
-        img.src = f.target.result;
-    };
-    reader.readAsDataURL(e.target.files[0]);
+elements.imgUpload.onchange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const bitmap = await createImageBitmap(file);
+    elements.canvas.width = bitmap.width;
+    elements.canvas.height = bitmap.height;
+    const ctx = elements.canvas.getContext("2d");
+    ctx.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
+    ctx.drawImage(bitmap, 0, 0);
+    latestImageBlob = await canvasToBlob(elements.canvas);
+    elements.btnRecognize.disabled = false;
+    elements.recStatus.textContent = "已加载本地图片，可点击执行深度分析。";
 };
 
 elements.btnRecognize.onclick = async () => {
-    if (!statusTracker.ai || !statusTracker.opencv) return;
-    
-    const startTime = performance.now();
-    elements.recStatus.textContent = "正在捕捉手掌形态...";
-    
-    const source = elements.video.srcObject ? elements.video : elements.canvas;
-    if (elements.video.srcObject) {
-        elements.canvas.width = elements.video.videoWidth;
-        elements.canvas.height = elements.video.videoHeight;
-        elements.canvas.getContext('2d').drawImage(elements.video, 0, 0);
-    }
+    const start = performance.now();
+    try {
+        elements.recStatus.textContent = "正在调用模型推理...";
 
-    const predictions = await handposeModel.estimateHands(source);
+        if (elements.video.srcObject) {
+            elements.canvas.width = elements.video.videoWidth;
+            elements.canvas.height = elements.video.videoHeight;
+            const ctx = elements.canvas.getContext("2d");
+            ctx.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
+            ctx.drawImage(elements.video, 0, 0);
+            latestImageBlob = await canvasToBlob(elements.canvas);
+        }
 
-    if (predictions.length > 0) {
-        const landmarks = predictions[0].landmarks;
-        const bitmap = await createImageBitmap(elements.canvas);
-        
-        algoWorker.postMessage({
-            bitmap,
-            landmarks: landmarks.map(p => ({ x: p[0], y: p[1] })),
-            width: elements.canvas.width,
-            height: elements.canvas.height
-        }, [bitmap]);
+        if (!latestImageBlob) {
+            elements.recStatus.textContent = "请先开启摄像头或上传图片。";
+            return;
+        }
 
-        elements.timeLabel.dataset.start = startTime;
-    } else {
-        elements.recStatus.textContent = "未检测到手掌，请调整姿势。";
+        const result = await callInferenceApi(latestImageBlob);
+        setScores(result.predictions);
+        setReasons(result.reasons);
+        drawPrediction(result.predictions);
+
+        const elapsed = Math.round(performance.now() - start);
+        elements.timeLabel.textContent = `${elapsed} ms`;
+        elements.recStatus.textContent = result.success ? "✅ 分析完成" : "⚠️ 分析完成，但存在识别风险";
+    } catch (err) {
+        elements.recStatus.textContent = "推理失败，请检查服务是否运行。";
+        setReasons([{ code: "API_ERROR", message: String(err.message || err) }]);
+        setStatus("后端不可用，请先启动 ml/api.py。", false);
     }
 };
 
-// --- 5. 最终渲染 ---
-function renderFinal(res, hegu) {
-    const ctx = elements.canvas.getContext('2d');
-    
-    // 绘制合谷点 (金色)
-    ctx.fillStyle = "#FFD700";
-    ctx.beginPath(); ctx.arc(hegu.x, hegu.y, 8, 0, Math.PI * 2); ctx.fill();
-
-    const drawLine = (path, color) => {
-        if (!path || path.length < 2) return;
-        ctx.strokeStyle = color; ctx.lineWidth = 5; ctx.lineCap = "round";
-        ctx.beginPath(); ctx.moveTo(path[0].x, path[0].y);
-        path.forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke();
-    };
-
-    drawLine(res.heart.path, "#FF3B30"); // 感情线
-    drawLine(res.head.path, "#4CD964");  // 智慧线
-    drawLine(res.life.path, "#007AFF");  // 生命线
-
-    const duration = performance.now() - parseFloat(elements.timeLabel.dataset.start);
-    elements.timeLabel.textContent = Math.round(duration) + " ms";
-    elements.recStatus.textContent = "✅ 分析完成";
-
-    // 同步 UI 进度
-    elements.heartConf.textContent = res.heart.score + "%";
-    elements.headConf.textContent = res.head.score + "%";
-    elements.lifeConf.textContent = res.life.score + "%";
-}
+window.addEventListener("load", async () => {
+    try {
+        const resp = await fetch(`${API_BASE}/api/health`);
+        if (!resp.ok) throw new Error("health check failed");
+        const data = await resp.json();
+        setStatus(`模型服务在线：${data.status}`);
+    } catch (_err) {
+        setStatus("模型服务离线，请先启动 ml/api.py。", false);
+    }
+});
